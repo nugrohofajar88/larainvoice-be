@@ -19,6 +19,7 @@ class PaymentController extends Controller
         $query = Payment::query()
             ->with(['invoice.customer', 'invoice.branch', 'bankAccount', 'user', 'files'])
             ->leftJoin('invoices', 'invoices.id', '=', 'payments.invoice_id')
+            ->leftJoin('customers', 'customers.id', '=', 'invoices.customer_id')
             ->select('payments.*');
 
         if (!$user->isSuperAdmin()) {
@@ -31,7 +32,13 @@ class PaymentController extends Controller
             $query->where('payments.invoice_id', $request->integer('invoice_id'));
         }
 
-        if ($request->filled('invoice_number')) {
+        if ($request->filled('search')) {
+            $search = trim((string) $request->input('search'));
+            $query->where(function ($innerQuery) use ($search) {
+                $innerQuery->where('invoices.invoice_number', 'like', '%' . $search . '%')
+                    ->orWhere('customers.full_name', 'like', '%' . $search . '%');
+            });
+        } elseif ($request->filled('invoice_number')) {
             $query->where('invoices.invoice_number', 'like', '%' . $request->input('invoice_number') . '%');
         }
 
@@ -193,6 +200,7 @@ class PaymentController extends Controller
             'id' => $payment->id,
             'invoice_id' => $payment->invoice_id,
             'invoice_number' => $payment->invoice?->invoice_number,
+            'customer_name' => $payment->invoice?->customer?->full_name,
             'amount' => (float) $payment->amount,
             'method' => $payment->payment_method,
             'is_dp' => (bool) $payment->is_dp,
