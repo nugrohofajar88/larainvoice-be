@@ -69,16 +69,25 @@ class InvoiceController extends Controller
             $query->where('invoices.branch_id', $request->integer('branch_id'));
         }
 
-        if ($request->filled('number')) {
-            $query->where('invoices.invoice_number', 'like', '%' . $request->input('number') . '%');
-        }
-
-        if ($request->filled('customer')) {
-            $search = $request->input('customer');
+        if ($request->filled('search')) {
+            $search = trim((string) $request->input('search'));
             $query->where(function ($innerQuery) use ($search) {
-                $innerQuery->where('customers.full_name', 'like', '%' . $search . '%')
+                $innerQuery->where('invoices.invoice_number', 'like', '%' . $search . '%')
+                    ->orWhere('customers.full_name', 'like', '%' . $search . '%')
                     ->orWhere('branches.name', 'like', '%' . $search . '%');
             });
+        } else {
+            if ($request->filled('number')) {
+                $query->where('invoices.invoice_number', 'like', '%' . $request->input('number') . '%');
+            }
+
+            if ($request->filled('customer')) {
+                $search = $request->input('customer');
+                $query->where(function ($innerQuery) use ($search) {
+                    $innerQuery->where('customers.full_name', 'like', '%' . $search . '%')
+                        ->orWhere('branches.name', 'like', '%' . $search . '%');
+                });
+            }
         }
 
         if ($request->filled('machine')) {
