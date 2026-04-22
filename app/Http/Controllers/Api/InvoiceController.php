@@ -956,7 +956,10 @@ class InvoiceController extends Controller
     {
         $paid = (float) $invoice->payments->sum('amount');
         $grandTotal = (float) $invoice->grand_total;
+        $remaining = max($grandTotal - $paid, 0);
         $productionStatus = $this->normalizeStatusKey($invoice->status);
+        $paymentStatus = $this->resolvePaymentStatus($paid, $grandTotal);
+        $overdue = $this->resolveOverdueMeta($invoice, $paymentStatus, $productionStatus);
 
         return [
             'id' => $invoice->id,
@@ -967,8 +970,13 @@ class InvoiceController extends Controller
             'notes' => $invoice->notes,
             'grand_total' => $grandTotal,
             'paid' => $paid,
-            'remaining' => max($grandTotal - $paid, 0),
+            'remaining' => $remaining,
             'status' => $paid >= $grandTotal && $grandTotal > 0 ? 'lunas' : ($paid > 0 ? 'dp' : 'belum'),
+            'payment_status' => $paymentStatus,
+            'payment_status_label' => $this->formatPaymentStatusLabel($paymentStatus),
+            'is_overdue' => $overdue['is_overdue'],
+            'overdue_days' => $overdue['overdue_days'],
+            'overdue_label' => $overdue['label'],
             'production_status' => $productionStatus,
             'production_status_label' => $this->formatStatusLabel($productionStatus),
             'date' => optional($invoice->transaction_date)->format('Y-m-d'),
@@ -978,6 +986,11 @@ class InvoiceController extends Controller
     private function transformDetail(Invoice $invoice): array
     {
         $paid = (float) $invoice->payments->sum('amount');
+        $grandTotal = (float) $invoice->grand_total;
+        $remaining = max($grandTotal - $paid, 0);
+        $productionStatus = $this->normalizeStatusKey($invoice->status);
+        $paymentStatus = $this->resolvePaymentStatus($paid, $grandTotal);
+        $overdue = $this->resolveOverdueMeta($invoice, $paymentStatus, $productionStatus);
 
         return [
             'id' => $invoice->id,
@@ -992,14 +1005,19 @@ class InvoiceController extends Controller
             'petugas' => $invoice->user?->name,
             'status' => $invoice->status,
             'notes' => $invoice->notes,
-            'production_status' => $this->normalizeStatusKey($invoice->status),
-            'production_status_label' => $this->formatStatusLabel($this->normalizeStatusKey($invoice->status)),
+            'payment_status' => $paymentStatus,
+            'payment_status_label' => $this->formatPaymentStatusLabel($paymentStatus),
+            'production_status' => $productionStatus,
+            'production_status_label' => $this->formatStatusLabel($productionStatus),
+            'is_overdue' => $overdue['is_overdue'],
+            'overdue_days' => $overdue['overdue_days'],
+            'overdue_label' => $overdue['label'],
             'subtotal' => (float) $invoice->total_amount,
             'discount_pct' => (float) $invoice->discount_pct,
             'discount_amount' => (float) $invoice->discount_amount,
-            'grand_total' => (float) $invoice->grand_total,
+            'grand_total' => $grandTotal,
             'paid' => $paid,
-            'remaining' => max((float) $invoice->grand_total - $paid, 0),
+            'remaining' => $remaining,
             'branch_detail' => [
                 'name' => $invoice->branch?->name,
                 'city' => $invoice->branch?->city,
@@ -1077,6 +1095,55 @@ class InvoiceController extends Controller
         ];
     }
 
+    private function resolvePaymentStatus(float $paid, float $grandTotal): string
+    {
+        if ($grandTotal > 0 && $paid >= $grandTotal) {
+            return 'paid';
+        }
+
+        if ($paid > 0) {
+            return 'partially_paid';
+        }
+
+        return 'unpaid';
+    }
+
+    private function formatPaymentStatusLabel(string $status): string
+    {
+        return match ($status) {
+            'paid' => 'Paid',
+            'partially_paid' => 'Partially Paid',
+            default => 'Unpaid',
+        };
+    }
+
+    private function resolveOverdueMeta(Invoice $invoice, string $paymentStatus, string $productionStatus): array
+    {
+        if ($paymentStatus === 'paid' || $productionStatus !== 'completed' || !$invoice->transaction_date) {
+            return [
+                'is_overdue' => false,
+                'overdue_days' => 0,
+                'label' => null,
+            ];
+        }
+
+        $overdueDays = Carbon::parse($invoice->transaction_date)->startOfDay()->diffInDays(now()->startOfDay(), false);
+
+        if ($overdueDays <= 0) {
+            return [
+                'is_overdue' => false,
+                'overdue_days' => 0,
+                'label' => null,
+            ];
+        }
+
+        return [
+            'is_overdue' => true,
+            'overdue_days' => $overdueDays,
+            'label' => 'Overdue ' . $overdueDays . ' hari',
+        ];
+    }
+
     private function formatPricingMode(?string $pricingMode): string
     {
         return match ($pricingMode) {
@@ -1132,4 +1199,6 @@ class InvoiceController extends Controller
         };
     }
 }
+
+
 
