@@ -1,66 +1,267 @@
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
+# Pioneer CNC Backend
 
-<p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
-</p>
+Backend API untuk aplikasi internal Pioneer CNC. Repository ini dibangun dengan Laravel dan menyediakan layanan data utama untuk frontend `pioneer-cnc`.
 
-## About Laravel
+Project ini menangani:
+- autentikasi user
+- master data
+- role dan permission
+- transaksi invoice
+- pembayaran
+- machine order
+- laporan operasional
+- migrasi data dari sistem lama
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
+README ini fokus pada backend `pioneer-cnc-be`. Dokumentasi frontend dapat dilihat di repository `pioneer-cnc`.
 
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
+## Stack
 
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
+- PHP 8.2+
+- Laravel 12
+- Laravel Sanctum
+- MySQL atau MariaDB
 
-## Learning Laravel
+## Peran Repository Ini
 
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework.
+`pioneer-cnc-be` adalah sumber data utama aplikasi. Frontend `pioneer-cnc` akan mengakses backend ini melalui endpoint API.
 
-You may also try the [Laravel Bootcamp](https://bootcamp.laravel.com), where you will be guided through building a modern Laravel application from scratch.
+Secara umum backend ini menyediakan:
+- login dan logout
+- proteksi endpoint berbasis token Sanctum
+- kontrol akses berbasis permission per menu
+- endpoint CRUD untuk master data dan transaksi
+- endpoint laporan untuk dashboard dan rekap data
 
-If you don't feel like reading, [Laracasts](https://laracasts.com) can help. Laracasts contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
+## Fitur Utama
 
-## Laravel Sponsors
+- Auth API dengan Sanctum
+- Dashboard summary
+- Master data:
+  branch, user, customer, sales, machine, plate type, size, machine type, component, supplier, cost type
+- Product dan pricing:
+  plate variants, cutting prices
+- Transaksi:
+  invoice, payment, machine order
+- File handling:
+  file item invoice, file mesin, file bukti pembayaran
+- Role dan menu permission
+- Laporan:
+  sales KPI, sales recap, invoice recap, payment recap, piutang, stok
+- Import data lama melalui command custom
 
-We would like to extend our thanks to the following sponsors for funding Laravel development. If you are interested in becoming a sponsor, please visit the [Laravel Partners program](https://partners.laravel.com).
+## Struktur Penting
 
-### Premium Partners
+- `app/Http/Controllers/Api`
+  seluruh controller API utama
+- `routes/api.php`
+  daftar endpoint API
+- `app/Http/Middleware`
+  middleware autentikasi dan permission
+- `database/migrations`
+  struktur database
+- `database/seeders`
+  data awal menu, role, permission, dan master dasar
+- `app/Console/Commands/MigrateLegacyData.php`
+  command migrasi data dari sistem lama
 
-- **[Vehikl](https://vehikl.com/)**
-- **[Tighten Co.](https://tighten.co)**
-- **[WebReinvent](https://webreinvent.com/)**
-- **[Kirschbaum Development Group](https://kirschbaumdevelopment.com)**
-- **[64 Robots](https://64robots.com)**
-- **[Curotec](https://www.curotec.com/services/technologies/laravel/)**
-- **[Cyber-Duck](https://cyber-duck.co.uk)**
-- **[DevSquad](https://devsquad.com/hire-laravel-developers)**
-- **[Jump24](https://jump24.co.uk)**
-- **[Redberry](https://redberry.international/laravel/)**
-- **[Active Logic](https://activelogic.com)**
-- **[byte5](https://byte5.de)**
-- **[OP.GG](https://op.gg)**
+## Autentikasi
 
-## Contributing
+Backend menggunakan Laravel Sanctum.
 
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
+Endpoint publik:
+- `POST /api/login`
 
-## Code of Conduct
+Endpoint terproteksi berada di dalam middleware:
+- `auth:sanctum`
 
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
+Contoh endpoint penting:
+- `GET /api/user`
+- `POST /api/logout`
+- `GET /api/dashboard/summary`
+- `GET /api/invoices`
+- `POST /api/payments`
 
-## Security Vulnerabilities
+## Permission
 
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
+Akses endpoint diatur dengan middleware permission, misalnya:
 
-## License
+```php
+->middleware('permission:payment,read')
+->middleware('permission:invoice,create')
+```
 
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+Struktur menu, role menu, dan permission awal diatur melalui seeder pada folder:
+
+- `database/seeders/MenuSeeder.php`
+- `database/seeders/RoleMenuSeeder.php`
+- `database/seeders/RoleMenuPermissionSeeder.php`
+
+## Setup Lokal
+
+1. Clone repository.
+2. Install dependency Composer.
+3. Copy `.env`.
+4. Atur koneksi database.
+5. Generate app key.
+6. Jalankan migration dan seeder.
+
+Contoh:
+
+```powershell
+composer install
+copy .env.example .env
+php artisan key:generate
+php artisan migrate --seed
+```
+
+## Contoh Environment
+
+Sesuaikan `.env` minimal seperti ini:
+
+```env
+APP_NAME="Pioneer CNC Backend"
+APP_ENV=local
+APP_DEBUG=true
+APP_URL=http://localhost:8001
+
+DB_CONNECTION=mysql
+DB_HOST=127.0.0.1
+DB_PORT=3306
+DB_DATABASE=pioneer_cnc
+DB_USERNAME=root
+DB_PASSWORD=
+
+QUEUE_CONNECTION=database
+SESSION_DRIVER=database
+CACHE_STORE=database
+
+REPORT_SALES_KPI_TARGET_MONTHLY=150000000
+REPORT_SALES_KPI_TARGET_YEARLY=1800000000
+```
+
+Jika memakai database lama untuk migrasi data, pastikan koneksi tambahannya juga didefinisikan di `config/database.php` dan `.env`.
+
+## Menjalankan Project
+
+Untuk development:
+
+```powershell
+php artisan serve --port=8001
+```
+
+Jika ingin menjalankan queue listener:
+
+```powershell
+php artisan queue:listen
+```
+
+## Seeder
+
+Seeder penting yang biasa dipakai:
+
+- `RoleSeeder`
+- `BranchSeeder`
+- `UserSeeder`
+- `MenuSeeder`
+- `RoleMenuSeeder`
+- `RoleMenuPermissionSeeder`
+
+Menjalankan seluruh seeder default:
+
+```powershell
+php artisan db:seed
+```
+
+Menjalankan seeder tertentu:
+
+```powershell
+php artisan db:seed --class=MenuSeeder
+php artisan db:seed --class=RoleMenuSeeder
+php artisan db:seed --class=RoleMenuPermissionSeeder
+```
+
+## Migrasi Data Lama
+
+Repository ini memiliki command khusus untuk migrasi data dari sistem lama:
+
+```powershell
+php artisan app:migrate-legacy-data
+```
+
+Command ini didefinisikan di:
+- `app/Console/Commands/MigrateLegacyData.php`
+
+Secara umum prosesnya mencakup:
+- migrasi master dasar
+- migrasi user, sales, customer
+- migrasi varian dan harga
+- migrasi invoice dan payment
+- migrasi attachment terkait transaksi lama
+
+Sebelum menjalankan command ini, pastikan:
+- koneksi database lama tersedia
+- struktur tabel target sudah bermigrasi
+- file attachment lama sudah berada di lokasi yang sesuai
+
+## File Upload dan Storage
+
+Backend ini menyimpan beberapa file ke disk `public`, misalnya:
+- file item invoice
+- file mesin
+- bukti pembayaran
+
+Pastikan symbolic link storage tersedia:
+
+```powershell
+php artisan storage:link
+```
+
+Lokasi file umumnya berada di:
+- `storage/app/public/invoice-items`
+- `storage/app/public/machines`
+- `storage/app/public/payment-proofs`
+
+## Testing dan Validasi
+
+Menjalankan syntax check atau test:
+
+```powershell
+php artisan test
+```
+
+Kalau ada perubahan besar di config, cache, route, atau view:
+
+```powershell
+php artisan optimize:clear
+```
+
+## Endpoint Ringkas
+
+Contoh area endpoint yang tersedia:
+
+- Auth:
+  `POST /api/login`, `POST /api/logout`, `GET /api/user`
+- Dashboard:
+  `GET /api/dashboard/summary`
+- Master:
+  `/api/customers`, `/api/branches`, `/api/users`, `/api/sales`
+- Produk:
+  `/api/plate-variants`, `/api/cutting-prices`, `/api/components`
+- Transaksi:
+  `/api/invoices`, `/api/payments`, `/api/machine-orders`
+- Laporan:
+  `/api/reports/sales-kpi`, `/api/reports/sales-recap/plate`, `/api/reports/sales-recap/cutting`
+
+Detail lengkap ada di:
+- `routes/api.php`
+
+## Catatan Pengembangan
+
+- Frontend `pioneer-cnc` mengonsumsi backend ini melalui `BACKEND_API_URL`.
+- Jika menu frontend tidak sesuai, biasanya sumbernya ada di seeder menu dan permission backend.
+- Jika file gagal diunduh, cek nilai `file_path` di database dan file fisik di `storage/app/public`.
+- Jika ada masalah auth, cek token Sanctum dan middleware permission.
+
+## Status
+
+Repository ini adalah backend utama untuk aplikasi internal Pioneer CNC dan dipakai sebagai sumber data untuk frontend `pioneer-cnc`.
