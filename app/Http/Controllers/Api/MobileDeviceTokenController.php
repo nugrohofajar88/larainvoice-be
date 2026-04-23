@@ -19,15 +19,19 @@ class MobileDeviceTokenController extends Controller
             'is_active' => ['nullable', 'boolean'],
         ]);
 
+        $tokenHash = hash('sha256', $validated['token']);
+
         $deviceToken = MobileDeviceToken::updateOrCreate(
             [
                 'user_id' => $user->id,
-                'token' => $validated['token'],
+                'token_hash' => $tokenHash,
             ],
             [
                 'branch_id' => $user->branch_id,
                 'platform' => $validated['platform'] ?? null,
                 'provider' => $validated['provider'] ?? 'fcm',
+                'token' => $validated['token'],
+                'token_hash' => $tokenHash,
                 'is_active' => (bool) ($validated['is_active'] ?? true),
                 'last_seen_at' => now(),
             ]
@@ -47,9 +51,11 @@ class MobileDeviceTokenController extends Controller
             'token' => ['required', 'string', 'max:2048'],
         ]);
 
+        $tokenHash = hash('sha256', $validated['token']);
+
         MobileDeviceToken::query()
             ->where('user_id', $user->id)
-            ->where('token', $validated['token'])
+            ->where('token_hash', $tokenHash)
             ->update([
                 'is_active' => false,
                 'last_seen_at' => now(),

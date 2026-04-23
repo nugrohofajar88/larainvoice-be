@@ -12,6 +12,7 @@ class MobileDeviceToken extends Model
         'provider',
         'platform',
         'token',
+        'token_hash',
         'is_active',
         'last_seen_at',
     ];

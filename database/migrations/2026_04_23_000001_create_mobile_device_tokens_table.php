@@ -18,11 +18,12 @@ return new class extends Migration
             $table->string('provider')->default('fcm');
             $table->string('platform', 32)->nullable();
             $table->text('token');
+            $table->string('token_hash', 64);
             $table->boolean('is_active')->default(true);
             $table->timestamp('last_seen_at')->nullable();
             $table->timestamps();
 
-            $table->unique(['user_id', 'token'], 'mobile_device_tokens_user_token_unique');
+            $table->unique(['user_id', 'token_hash'], 'mobile_device_tokens_user_token_hash_unique');
         });
     }
 
