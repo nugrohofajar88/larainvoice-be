@@ -16,6 +16,7 @@ use App\Models\Machine;
 use App\Models\Payment;
 use App\Models\PlateVariant;
 use App\Models\StockMovement;
+use App\Services\MobileNotificationService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -329,6 +330,11 @@ class InvoiceController extends Controller
             ]);
         });
 
+        $notificationService = app(MobileNotificationService::class);
+        $notificationService->notifyInvoiceCreated($invoice);
+        $invoice->payments->each(fn (Payment $payment) => $notificationService->notifyPaymentCreated($payment));
+        $this->notifyLowStockItems($invoice, $notificationService);
+
         return response()->json([
             'message' => 'Invoice berhasil dibuat',
             'data' => $this->transformDetail($invoice),
@@ -621,6 +627,21 @@ class InvoiceController extends Controller
             'payment_date' => data_get($validated, 'payment.payment_date', $invoice->transaction_date?->format('Y-m-d') ?? now()->toDateString()),
             'proof_image' => $request->input('payment.proof_image'),
         ]);
+    }
+
+    private function notifyLowStockItems(Invoice $invoice, MobileNotificationService $notificationService): void
+    {
+        $invoice->loadMissing(['items.plateVariant.branch.setting', 'items.plateVariant.plateType', 'items.plateVariant.size', 'items.component.branch.setting']);
+
+        foreach ($invoice->items as $item) {
+            if ($item->product_type === 'plate' && $item->plateVariant) {
+                $notificationService->notifyLowStockForPlateVariant($item->plateVariant);
+            }
+
+            if ($item->product_type === 'component' && $item->component) {
+                $notificationService->notifyLowStockForComponent($item->component);
+            }
+        }
     }
 
     private function resolveItemPrice(array $item): float

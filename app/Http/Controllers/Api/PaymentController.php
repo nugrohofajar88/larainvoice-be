@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Invoice;
 use App\Models\Payment;
 use App\Models\PaymentFile;
+use App\Services\MobileNotificationService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
@@ -158,6 +159,8 @@ class PaymentController extends Controller
 
             return $payment;
         });
+
+        app(MobileNotificationService::class)->notifyPaymentCreated($payment);
 
         return response()->json([
             'message' => 'Pembayaran berhasil dicatat',

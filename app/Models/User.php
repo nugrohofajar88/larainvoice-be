@@ -103,6 +103,16 @@ class User extends Authenticatable
         return $this->hasMany(Payment::class);
     }
 
+    public function mobileDeviceTokens()
+    {
+        return $this->hasMany(MobileDeviceToken::class);
+    }
+
+    public function userNotifications()
+    {
+        return $this->hasMany(UserNotification::class);
+    }
+
     public function isSuperAdmin()
     {
         return in_array($this->role->name, ['administrator', 'admin pusat']);

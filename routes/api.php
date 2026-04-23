@@ -23,7 +23,9 @@ use App\Http\Controllers\Api\ComponentCategoryController;
 use App\Http\Controllers\Api\ComponentController;
 use App\Http\Controllers\Api\CostTypeController;
 use App\Http\Controllers\Api\MachineOrderController;
+use App\Http\Controllers\Api\MobileDeviceTokenController;
 use App\Http\Controllers\Api\SupplierController;
+use App\Http\Controllers\Api\UserNotificationController;
 use Illuminate\Http\Request;
 
 Route::get('/test', function () {
@@ -44,6 +46,12 @@ Route::middleware('auth:sanctum')->group(function () {
     });
 
     Route::middleware('auth:sanctum')->post('/logout', [AuthController::class, 'logout']);
+    Route::get('/notifications', [UserNotificationController::class, 'index']);
+    Route::get('/notifications/unread-count', [UserNotificationController::class, 'unreadCount']);
+    Route::patch('/notifications/{id}/read', [UserNotificationController::class, 'markAsRead']);
+    Route::patch('/notifications/read-all', [UserNotificationController::class, 'markAllAsRead']);
+    Route::post('/device-tokens', [MobileDeviceTokenController::class, 'store']);
+    Route::delete('/device-tokens', [MobileDeviceTokenController::class, 'destroy']);
 
     // Dashboard
     Route::get('/dashboard/summary', [DashboardController::class, 'summary'])

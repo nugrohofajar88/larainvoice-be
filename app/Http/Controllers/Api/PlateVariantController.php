@@ -8,6 +8,7 @@ use App\Models\PlateVariant;
 use Illuminate\Support\Facades\DB;
 use App\Models\StockMovement;
 use App\Models\PlatePriceHistory;
+use App\Services\MobileNotificationService;
 use Illuminate\Support\Facades\Log;
 
 class PlateVariantController extends Controller
@@ -61,6 +62,8 @@ class PlateVariantController extends Controller
 
         DB::beginTransaction();
         try {
+            $affectedVariantIds = [];
+
             foreach ($items as $item) {
                 $variant = PlateVariant::find($item['id']);
                 if (!$variant) continue;
@@ -86,6 +89,8 @@ class PlateVariantController extends Controller
                         'created_at' => now(),
                         'updated_at' => now(),
                     ]);
+
+                    $affectedVariantIds[] = $variant->id;
                 }
 
                 // 2. Process Price Changes
@@ -94,6 +99,13 @@ class PlateVariantController extends Controller
             }
 
             DB::commit();
+
+            $notificationService = app(MobileNotificationService::class);
+            PlateVariant::with(['branch.setting', 'plateType', 'size'])
+                ->whereIn('id', array_unique($affectedVariantIds))
+                ->get()
+                ->each(fn (PlateVariant $variant) => $notificationService->notifyLowStockForPlateVariant($variant));
+
             return response()->json(['message' => 'Batch update successful']);
         } catch (\Exception $e) {
             DB::rollBack();
@@ -307,6 +319,10 @@ class PlateVariantController extends Controller
 
         Log::info('Data received from frontend:', $request->all());
 
+        app(MobileNotificationService::class)->notifyLowStockForPlateVariant(
+            $variant->fresh(['branch.setting', 'plateType', 'size'])
+        );
+
         return response()->json(['message' => 'Stok baru berhasil ditambahkan', 'data' => $variant->load(['branch','plateType','size'])], 200);
     }
 
@@ -399,6 +415,12 @@ class PlateVariantController extends Controller
                 'created_at' => now(),
                 'updated_at' => now(),
             ]);
+        }
+
+        if ($qtyDifference !== 0) {
+            app(MobileNotificationService::class)->notifyLowStockForPlateVariant(
+                $variant->fresh(['branch.setting', 'plateType', 'size'])
+            );
         }
 
         return response()->json(['message' => 'Plate variant berhasil diupdate', 'data' => $variant->load(['branch','plateType','size'])]);

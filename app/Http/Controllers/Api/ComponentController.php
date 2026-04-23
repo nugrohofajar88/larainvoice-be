@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use App\Models\Component;
+use App\Services\MobileNotificationService;
 use Illuminate\Support\Facades\DB;
 
 class ComponentController extends Controller
@@ -248,6 +249,10 @@ class ComponentController extends Controller
 
             DB::commit();
 
+            app(MobileNotificationService::class)->notifyLowStockForComponent(
+                $component->fresh(['branch.setting'])
+            );
+
             return response()->json([
                 'message' => $isExistingComponent
                     ? 'Stock dan harga component existing berhasil diproses'
@@ -354,6 +359,12 @@ class ComponentController extends Controller
                 'created_at' => now(),
                 'updated_at' => now(),
             ]);
+        }
+
+        if ($qtyDifference !== 0) {
+            app(MobileNotificationService::class)->notifyLowStockForComponent(
+                $component->fresh(['branch.setting'])
+            );
         }
 
         return response()->json([
