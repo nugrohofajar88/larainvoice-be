@@ -24,6 +24,7 @@ use App\Http\Controllers\Api\ComponentController;
 use App\Http\Controllers\Api\CostTypeController;
 use App\Http\Controllers\Api\MachineOrderController;
 use App\Http\Controllers\Api\MobileDeviceTokenController;
+use App\Http\Controllers\Api\NotificationTestController;
 use App\Http\Controllers\Api\SupplierController;
 use App\Http\Controllers\Api\UserNotificationController;
 use Illuminate\Http\Request;
@@ -50,6 +51,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/notifications/unread-count', [UserNotificationController::class, 'unreadCount']);
     Route::patch('/notifications/{id}/read', [UserNotificationController::class, 'markAsRead']);
     Route::patch('/notifications/read-all', [UserNotificationController::class, 'markAllAsRead']);
+    Route::get('/notifications/test/diagnostics', [NotificationTestController::class, 'diagnostics']);
+    Route::post('/notifications/test/send', [NotificationTestController::class, 'send']);
     Route::post('/device-tokens', [MobileDeviceTokenController::class, 'store']);
     Route::delete('/device-tokens', [MobileDeviceTokenController::class, 'destroy']);
 

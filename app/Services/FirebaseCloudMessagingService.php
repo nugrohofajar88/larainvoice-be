@@ -8,6 +8,7 @@ use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use RuntimeException;
 
 class FirebaseCloudMessagingService
 {
@@ -17,7 +18,12 @@ class FirebaseCloudMessagingService
     {
         $userIds = $users->pluck('id')->filter()->unique()->values();
 
-        if ($userIds->isEmpty() || !$this->isConfigured()) {
+        if ($userIds->isEmpty()) {
+            return;
+        }
+
+        if (!$this->isConfigured()) {
+            Log::warning('FCM skipped because Firebase is not configured correctly.', $this->diagnostics());
             return;
         }
 
@@ -25,6 +31,13 @@ class FirebaseCloudMessagingService
             ->whereIn('user_id', $userIds)
             ->where('is_active', true)
             ->get();
+
+        if ($tokens->isEmpty()) {
+            Log::info('FCM skipped because no active mobile device token was found.', [
+                'user_ids' => $userIds->all(),
+            ]);
+            return;
+        }
 
         foreach ($tokens as $token) {
             $this->sendToToken($token, $title, $body, $data);
@@ -34,13 +47,21 @@ class FirebaseCloudMessagingService
     public function sendToToken(MobileDeviceToken $deviceToken, string $title, string $body, array $data = []): bool
     {
         if (!$this->isConfigured()) {
+            Log::warning('FCM skipped for token because Firebase is not configured correctly.', [
+                ...$this->diagnostics(),
+                'device_token_id' => $deviceToken->id,
+            ]);
             return false;
         }
 
-        $projectId = (string) config('services.firebase.project_id');
+        $projectId = $this->projectId();
         $accessToken = $this->getAccessToken();
 
         if (!$accessToken) {
+            Log::warning('FCM skipped because access token could not be generated.', [
+                'device_token_id' => $deviceToken->id,
+                'project_id' => $projectId,
+            ]);
             return false;
         }
 
@@ -69,6 +90,16 @@ class FirebaseCloudMessagingService
             ]);
 
         if ($response->successful()) {
+            $deviceToken->update([
+                'last_seen_at' => now(),
+            ]);
+
+            Log::info('FCM send success', [
+                'device_token_id' => $deviceToken->id,
+                'project_id' => $projectId,
+                'response' => $response->json(),
+            ]);
+
             return true;
         }
 
@@ -91,11 +122,26 @@ class FirebaseCloudMessagingService
 
     public function isConfigured(): bool
     {
+        $projectId = $this->projectId();
         $path = $this->serviceAccountPath();
 
-        return filled(config('services.firebase.project_id'))
+        return filled($projectId)
             && $path !== null
             && is_file($path);
+    }
+
+    public function diagnostics(): array
+    {
+        $serviceAccount = $this->serviceAccount();
+
+        return [
+            'configured_project_id' => config('services.firebase.project_id'),
+            'resolved_project_id' => $this->projectId(),
+            'service_account_path' => $this->serviceAccountPath(),
+            'service_account_exists' => $this->serviceAccountPath() ? is_file($this->serviceAccountPath()) : false,
+            'service_account_project_id' => $serviceAccount['project_id'] ?? null,
+            'service_account_client_email' => $serviceAccount['client_email'] ?? null,
+        ];
     }
 
     private function getAccessToken(): ?string
@@ -149,6 +195,18 @@ class FirebaseCloudMessagingService
 
             return $response->json('access_token');
         });
+    }
+
+    private function projectId(): ?string
+    {
+        $configuredProjectId = trim((string) config('services.firebase.project_id'));
+        if ($configuredProjectId !== '') {
+            return $configuredProjectId;
+        }
+
+        $serviceAccount = $this->serviceAccount();
+
+        return $serviceAccount['project_id'] ?? null;
     }
 
     private function serviceAccount(): ?array
