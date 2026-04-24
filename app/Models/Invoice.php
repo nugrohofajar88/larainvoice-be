@@ -76,4 +76,10 @@ class Invoice extends Model
         return $this->belongsTo(MachineOrder::class, 'source_id')
             ->where('source_type', 'machine_order');
     }
+
+    public function sourceServiceOrder()
+    {
+        return $this->belongsTo(ServiceOrder::class, 'source_id')
+            ->where('source_type', 'service_order');
+    }
 }

@@ -16,7 +16,7 @@ class RoleMenuPermissionSeeder extends Seeder
 
         $permissionGroups = [
             1 => [
-                'menus' => array_merge(range(1, 20), [31, 32, 34, 35]),
+                'menus' => array_merge(range(1, 20), [31, 32, 34, 35, 36]),
                 'flags' => [
                     'can_create' => true,
                     'can_read' => true,
@@ -28,7 +28,7 @@ class RoleMenuPermissionSeeder extends Seeder
                 ],
             ],
             2 => [
-                'menus' => [1, 3, 4, 5, 6, 7, 9, 10, 12, 20, 13, 15, 16, 17, 31, 32, 34, 35],
+                'menus' => [1, 3, 4, 5, 6, 7, 9, 10, 12, 20, 13, 15, 16, 17, 31, 32, 34, 35, 36],
                 'flags' => [
                     'can_create' => true,
                     'can_read' => true,
@@ -40,7 +40,7 @@ class RoleMenuPermissionSeeder extends Seeder
                 ],
             ],
             3 => [
-                'menus' => [1, 5, 6, 7, 12, 20, 13, 34, 35],
+                'menus' => [1, 5, 6, 7, 12, 20, 13, 34, 35, 36],
                 'flags' => [
                     'can_create' => true,
                     'can_read' => true,
@@ -52,7 +52,7 @@ class RoleMenuPermissionSeeder extends Seeder
                 ],
             ],
             4 => [
-                'menus' => [5, 12, 20, 13, 34, 35],
+                'menus' => [5, 12, 20, 13, 34, 35, 36],
                 'flags' => [
                     'can_create' => true,
                     'can_read' => true,
@@ -64,7 +64,7 @@ class RoleMenuPermissionSeeder extends Seeder
                 ],
             ],
             5 => [
-                'menus' => [7, 12, 20, 35],
+                'menus' => [7, 12, 20, 35, 36],
                 'flags' => [
                     'can_create' => false,
                     'can_read' => true,
@@ -76,7 +76,7 @@ class RoleMenuPermissionSeeder extends Seeder
                 ],
             ],
             6 => [
-                'menus' => [5, 12, 20, 34, 35],
+                'menus' => [5, 12, 20, 34, 35, 36],
                 'flags' => [
                     'can_create' => true,
                     'can_read' => true,

@@ -16,6 +16,7 @@ use App\Models\Machine;
 use App\Models\MachineOrder;
 use App\Models\Payment;
 use App\Models\PlateVariant;
+use App\Models\ServiceOrder;
 use App\Models\StockMovement;
 use App\Services\MobileNotificationService;
 use Carbon\Carbon;
@@ -42,6 +43,7 @@ class InvoiceController extends Controller
                 'cost_types' => $this->invoiceCostTypes(),
                 'cutting_prices' => $this->invoiceCuttingPrices(),
                 'machine_orders' => [],
+                'service_orders' => [],
             ]);
         }
 
@@ -53,6 +55,7 @@ class InvoiceController extends Controller
             'cost_types' => $this->invoiceCostTypes(),
             'cutting_prices' => $this->invoiceCuttingPrices(),
             'machine_orders' => $this->invoiceMachineOrders($branchId),
+            'service_orders' => $this->invoiceServiceOrders($branchId),
         ]);
     }
 
@@ -1033,6 +1036,47 @@ class InvoiceController extends Controller
                         'qty' => (float) $cost->qty,
                         'price' => (float) $cost->price,
                         'total' => (float) $cost->total,
+                    ])->values()->all(),
+                ];
+            })
+            ->all();
+    }
+
+    private function invoiceServiceOrders(?int $branchId): array
+    {
+        return ServiceOrder::query()
+            ->with([
+                'customer:id,full_name',
+                'components:id,service_order_id,component_id,component_name_snapshot,qty,notes,billable',
+                'components.component:id,name',
+            ])
+            ->when($branchId, fn ($query) => $query->where('branch_id', $branchId))
+            ->whereIn('status', ['confirmed', 'in_progress', 'completed'])
+            ->whereNull('invoice_id')
+            ->orderByDesc('order_date')
+            ->orderByDesc('id')
+            ->get()
+            ->map(function (ServiceOrder $order) {
+                return [
+                    'id' => $order->id,
+                    'order_number' => $order->order_number,
+                    'order_type' => $order->order_type,
+                    'order_date' => optional($order->order_date)->format('Y-m-d'),
+                    'status' => $order->status,
+                    'customer_id' => $order->customer_id,
+                    'customer_name' => $order->customer?->full_name,
+                    'title' => $order->title,
+                    'category' => $order->category,
+                    'location' => $order->location,
+                    'planned_start_date' => optional($order->planned_start_date)->format('Y-m-d'),
+                    'duration_days' => $order->duration_days,
+                    'components' => $order->components->map(fn ($component) => [
+                        'id' => $component->id,
+                        'component_id' => $component->component_id,
+                        'component_name' => $component->component_name_snapshot ?: $component->component?->name,
+                        'qty' => (int) $component->qty,
+                        'notes' => $component->notes,
+                        'billable' => (bool) $component->billable,
                     ])->values()->all(),
                 ];
             })

@@ -23,6 +23,7 @@ use App\Http\Controllers\Api\ComponentCategoryController;
 use App\Http\Controllers\Api\ComponentController;
 use App\Http\Controllers\Api\CostTypeController;
 use App\Http\Controllers\Api\MachineOrderController;
+use App\Http\Controllers\Api\ServiceOrderController;
 use App\Http\Controllers\Api\MobileDeviceTokenController;
 use App\Http\Controllers\Api\NotificationTestController;
 use App\Http\Controllers\Api\SupplierController;
@@ -352,5 +353,21 @@ Route::middleware('auth:sanctum')->group(function () {
         ->middleware('permission:machine-order,update');
     Route::delete('/machine-orders/{id}', [MachineOrderController::class, 'destroy'])
         ->middleware('permission:machine-order,delete');
+
+    // Service orders (covers service & training via order_type)
+    Route::get('/service-orders', [ServiceOrderController::class, 'index'])
+        ->middleware('permission:service-order,read');
+    Route::get('/service-orders/{id}', [ServiceOrderController::class, 'show'])
+        ->middleware('permission:service-order,read');
+    Route::post('/service-orders/{id}/create-invoice', [ServiceOrderController::class, 'createInvoice'])
+        ->middleware('permission:invoice,create');
+    Route::post('/service-orders', [ServiceOrderController::class, 'store'])
+        ->middleware('permission:service-order,create');
+    Route::put('/service-orders/{id}', [ServiceOrderController::class, 'update'])
+        ->middleware('permission:service-order,update');
+    Route::patch('/service-orders/{id}/status', [ServiceOrderController::class, 'updateStatus'])
+        ->middleware('permission:service-order,update');
+    Route::delete('/service-orders/{id}', [ServiceOrderController::class, 'destroy'])
+        ->middleware('permission:service-order,delete');
 
 });
