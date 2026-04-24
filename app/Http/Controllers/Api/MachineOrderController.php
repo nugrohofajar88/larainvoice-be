@@ -343,6 +343,15 @@ class MachineOrderController extends Controller
         $order = $this->findAccessibleOrder($request, $id);
         $validated = $request->validate([
             'transaction_date' => ['nullable', 'date'],
+            'discount_pct' => ['nullable', 'numeric', 'min:0', 'max:100'],
+            'grand_total' => ['nullable', 'numeric', 'min:0'],
+            'notes' => ['nullable', 'string'],
+            'items' => ['nullable', 'array', 'min:1'],
+            'items.*.description' => ['required_with:items', 'string', 'max:500'],
+            'items.*.qty' => ['required_with:items', 'numeric', 'min:0.01'],
+            'items.*.unit' => ['nullable', 'string', 'max:50'],
+            'items.*.price' => ['required_with:items', 'numeric', 'min:0'],
+            'items.*.cost_type_id' => ['nullable', 'exists:cost_types,id'],
         ]);
 
         if (!in_array($order->status, ['ready', 'in_shipping', 'accepted', 'completed'], true)) {
@@ -376,6 +385,18 @@ class MachineOrderController extends Controller
             $transactionDate = $validated['transaction_date']
                 ?? optional($order->order_date)->format('Y-m-d')
                 ?? now()->toDateString();
+            $itemsPayload = $validated['items'] ?? [];
+            $itemsTotal = collect($itemsPayload)->sum(fn ($item) => (float) $item['qty'] * (float) $item['price']);
+            $baseTotal = $itemsPayload ? $itemsTotal : (float) $order->remaining_total;
+            $requestedGrandTotal = array_key_exists('grand_total', $validated)
+                ? (float) $validated['grand_total']
+                : $baseTotal;
+            $grandTotal = max(min($requestedGrandTotal, $baseTotal), 0);
+            $discountAmount = round(max($baseTotal - $grandTotal, 0), 2);
+            $discountPct = $baseTotal > 0
+                ? round(($discountAmount / $baseTotal) * 100, 2)
+                : 0;
+
             $invoice = Invoice::create([
                 'invoice_number' => $this->generateInvoiceNumber((int) $order->branch_id, $transactionDate),
                 'invoice_type' => 'machine_order',
@@ -386,15 +407,19 @@ class MachineOrderController extends Controller
                 'machine_id' => $order->machine_id,
                 'user_id' => $user->id,
                 'transaction_date' => $transactionDate,
-                'status' => 'In-process',
-                'total_amount' => (float) $order->remaining_total,
-                'discount_pct' => 0,
-                'discount_amount' => 0,
-                'grand_total' => (float) $order->remaining_total,
-                'notes' => $this->buildMachineOrderInvoiceNotes($order),
+                'status' => 'Completed',
+                'total_amount' => $baseTotal,
+                'discount_pct' => $discountPct,
+                'discount_amount' => $discountAmount,
+                'grand_total' => $grandTotal,
+                'notes' => $validated['notes'] ?? $this->buildMachineOrderInvoiceNotes($order),
             ]);
 
-            $this->syncMachineOrderInvoiceItems($invoice, $order);
+            if ($itemsPayload) {
+                $this->syncSubmittedMachineOrderInvoiceItems($invoice, $order, $itemsPayload);
+            } else {
+                $this->syncMachineOrderInvoiceItems($invoice, $order);
+            }
 
             return $invoice->fresh(['items', 'payments']);
         });
@@ -856,6 +881,34 @@ class MachineOrderController extends Controller
             'discount_amount' => 0,
             'subtotal' => (float) $order->remaining_total,
         ]);
+    }
+
+    private function syncSubmittedMachineOrderInvoiceItems(Invoice $invoice, MachineOrder $order, array $items): void
+    {
+        foreach ($items as $item) {
+            $qty = (float) ($item['qty'] ?? 1);
+            $price = (float) ($item['price'] ?? 0);
+            $description = trim((string) ($item['description'] ?? ''));
+            $costType = !empty($item['cost_type_id']) ? CostType::find($item['cost_type_id']) : null;
+            $isAdditionalCost = !empty($item['cost_type_id']);
+
+            InvoiceItem::create([
+                'invoice_id' => $invoice->id,
+                'product_type' => $isAdditionalCost ? 'cost_type' : 'machine_order',
+                'item_type' => $isAdditionalCost ? 'machine_order_additional_cost' : 'machine_order_balance',
+                'source_type' => 'machine_order',
+                'source_id' => $order->id,
+                'cost_type_id' => $costType?->id,
+                'description' => $description ?: $this->buildMachineOrderInvoiceDescription($order),
+                'unit' => $item['unit'] ?? ($isAdditionalCost ? 'biaya' : 'tagihan'),
+                'qty' => $qty,
+                'minutes' => 0,
+                'price' => $price,
+                'discount_pct' => 0,
+                'discount_amount' => 0,
+                'subtotal' => round($qty * $price, 2),
+            ]);
+        }
     }
 
     private function buildMachineOrderInvoiceNotes(MachineOrder $order): ?string
