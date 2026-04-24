@@ -57,7 +57,7 @@ class PaymentController extends Controller
 
         $sortBy = $request->input('sort_by', 'id');
         $sortDir = strtolower($request->input('sort_dir', 'desc'));
-        $allowedSorts = ['id', 'invoice_number', 'amount', 'method', 'is_dp', 'date', 'created_at'];
+        $allowedSorts = ['id', 'invoice_number', 'amount', 'method', 'is_dp', 'payment_type', 'date', 'created_at'];
 
         if (!in_array($sortBy, $allowedSorts, true)) {
             $sortBy = 'id';
@@ -93,6 +93,7 @@ class PaymentController extends Controller
             'amount' => ['required', 'numeric', 'min:0.01'],
             'method' => ['nullable', 'string', 'max:255'],
             'payment_method' => ['nullable', 'string', 'max:255'],
+            'payment_type' => ['nullable', 'in:dp,cicilan,pelunasan,refund'],
             'is_dp' => ['nullable', 'boolean'],
             'date' => ['nullable', 'date'],
             'payment_date' => ['nullable', 'date'],
@@ -124,6 +125,9 @@ class PaymentController extends Controller
         }
 
         $payment = DB::transaction(function () use ($request, $invoice, $validated, $branchId, $amount, $remaining) {
+            $paymentType = $validated['payment_type']
+                ?? ((bool) ($validated['is_dp'] ?? ($amount < $remaining)) ? 'cicilan' : 'pelunasan');
+
             $payment = Payment::create([
                 'invoice_id' => $invoice->id,
                 'branch_id' => $branchId,
@@ -131,7 +135,8 @@ class PaymentController extends Controller
                 'user_id' => $request->user()->id,
                 'amount' => $amount,
                 'payment_method' => $validated['payment_method'] ?? $validated['method'] ?? 'Cash',
-                'is_dp' => (bool) ($validated['is_dp'] ?? ($amount < $remaining)),
+                'payment_type' => $paymentType,
+                'is_dp' => in_array($paymentType, ['dp', 'cicilan'], true),
                 'payment_date' => $validated['payment_date'] ?? $validated['date'] ?? now()->toDateString(),
                 'proof_image' => $validated['proof_image'] ?? null,
                 'note' => $validated['note'] ?? null,
@@ -206,6 +211,7 @@ class PaymentController extends Controller
             'customer_name' => $payment->invoice?->customer?->full_name,
             'amount' => (float) $payment->amount,
             'method' => $payment->payment_method,
+            'payment_type' => $payment->payment_type ?: ($payment->is_dp ? 'cicilan' : 'pelunasan'),
             'is_dp' => (bool) $payment->is_dp,
             'date' => optional($payment->payment_date)->format('Y-m-d'),
             'user_id' => $payment->user_id,

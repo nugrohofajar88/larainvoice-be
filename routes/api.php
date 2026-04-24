@@ -342,9 +342,13 @@ Route::middleware('auth:sanctum')->group(function () {
         ->middleware('permission:machine-order,read');
     Route::get('/machine-orders/{id}', [MachineOrderController::class, 'show'])
         ->middleware('permission:machine-order,read');
+    Route::post('/machine-orders/{id}/create-invoice', [MachineOrderController::class, 'createInvoice'])
+        ->middleware('permission:invoice,create');
     Route::post('/machine-orders', [MachineOrderController::class, 'store'])
         ->middleware('permission:machine-order,create');
     Route::put('/machine-orders/{id}', [MachineOrderController::class, 'update'])
+        ->middleware('permission:machine-order,update');
+    Route::patch('/machine-orders/{id}/status', [MachineOrderController::class, 'updateStatus'])
         ->middleware('permission:machine-order,update');
     Route::delete('/machine-orders/{id}', [MachineOrderController::class, 'destroy'])
         ->middleware('permission:machine-order,delete');

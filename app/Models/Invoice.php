@@ -14,6 +14,9 @@ class Invoice extends Model
 {
     protected $fillable = [
         'invoice_number',
+        'invoice_type',
+        'source_type',
+        'source_id',
         'branch_id',
         'customer_id',
         'machine_id',
@@ -28,6 +31,7 @@ class Invoice extends Model
     ];
 
     protected $casts = [
+        'source_id' => 'integer',
         'transaction_date' => 'date',
         'total_amount' => 'decimal:2',
         'discount_pct' => 'decimal:2',
@@ -65,5 +69,11 @@ class Invoice extends Model
     public function payments()
     {
         return $this->hasMany(Payment::class);
+    }
+
+    public function sourceMachineOrder()
+    {
+        return $this->belongsTo(MachineOrder::class, 'source_id')
+            ->where('source_type', 'machine_order');
     }
 }

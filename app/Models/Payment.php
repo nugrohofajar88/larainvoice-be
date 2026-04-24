@@ -18,6 +18,7 @@ class Payment extends Model
         'user_id',
         'amount',
         'payment_method',
+        'payment_type',
         'is_dp',
         'payment_date',
         'proof_image',

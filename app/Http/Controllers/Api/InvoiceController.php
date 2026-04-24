@@ -13,6 +13,7 @@ use App\Models\Invoice;
 use App\Models\InvoiceItem;
 use App\Models\InvoiceItemFile;
 use App\Models\Machine;
+use App\Models\MachineOrder;
 use App\Models\Payment;
 use App\Models\PlateVariant;
 use App\Models\StockMovement;
@@ -40,6 +41,7 @@ class InvoiceController extends Controller
                 'components' => [],
                 'cost_types' => $this->invoiceCostTypes(),
                 'cutting_prices' => $this->invoiceCuttingPrices(),
+                'machine_orders' => [],
             ]);
         }
 
@@ -50,6 +52,7 @@ class InvoiceController extends Controller
             'components' => $this->invoiceComponents($branchId),
             'cost_types' => $this->invoiceCostTypes(),
             'cutting_prices' => $this->invoiceCuttingPrices(),
+            'machine_orders' => $this->invoiceMachineOrders($branchId),
         ]);
     }
 
@@ -295,6 +298,9 @@ class InvoiceController extends Controller
 
             $invoice = Invoice::create([
                 'invoice_number' => $invoiceNumber,
+                'invoice_type' => 'sales',
+                'source_type' => null,
+                'source_id' => null,
                 'branch_id' => $branchId,
                 'customer_id' => $validated['customer_id'],
                 'machine_id' => $validated['machine_id'] ?? null,
@@ -549,6 +555,11 @@ class InvoiceController extends Controller
             $invoiceItem = InvoiceItem::create([
                 'invoice_id' => $invoice->id,
                 'product_type' => $productType,
+                'item_type' => $productType,
+                'source_type' => $this->resolveInvoiceItemSourceType($productType),
+                'source_id' => $this->resolveInvoiceItemSourceId($productType, $item),
+                'description' => $this->buildInvoiceItemDescription($productType, $item),
+                'unit' => $this->buildInvoiceItemUnit($productType, $item),
                 'plate_variant_id' => $productType === 'plate' ? ($item['plate_variant_id'] ?? null) : null,
                 'cutting_price_id' => $productType === 'cutting' ? ($item['cutting_price_id'] ?? null) : null,
                 'component_id' => $productType === 'component' ? ($item['component_id'] ?? null) : null,
@@ -623,6 +634,7 @@ class InvoiceController extends Controller
             'user_id' => $request->user()?->id,
             'amount' => $amount,
             'payment_method' => data_get($validated, 'payment.payment_method', 'Cash'),
+            'payment_type' => (bool) data_get($validated, 'payment.is_dp', $amount < (float) $invoice->grand_total) ? 'cicilan' : 'pelunasan',
             'is_dp' => (bool) data_get($validated, 'payment.is_dp', $amount < (float) $invoice->grand_total),
             'payment_date' => data_get($validated, 'payment.payment_date', $invoice->transaction_date?->format('Y-m-d') ?? now()->toDateString()),
             'proof_image' => $request->input('payment.proof_image'),
@@ -982,6 +994,51 @@ class InvoiceController extends Controller
             ->toArray();
     }
 
+    private function invoiceMachineOrders(?int $branchId): array
+    {
+        return MachineOrder::query()
+            ->with([
+                'customer:id,full_name',
+                'machine:id,machine_number',
+                'costs:id,machine_order_id,cost_name_snapshot,description,qty,price,total',
+            ])
+            ->when($branchId, fn ($query) => $query->where('branch_id', $branchId))
+            ->whereIn('status', ['ready', 'in_shipping', 'accepted', 'completed'])
+            ->whereDoesntHave('invoices')
+            ->orderByDesc('order_date')
+            ->orderByDesc('id')
+            ->get()
+            ->map(function (MachineOrder $order) {
+                return [
+                    'id' => $order->id,
+                    'order_number' => $order->order_number,
+                    'order_date' => optional($order->order_date)->format('Y-m-d'),
+                    'status' => $order->status,
+                    'customer_id' => $order->customer_id,
+                    'customer_name' => $order->customer?->full_name,
+                    'machine_id' => $order->machine_id,
+                    'machine_name' => $order->machine_name_snapshot ?: $order->machine?->machine_number,
+                    'qty' => (int) $order->qty,
+                    'base_price' => (float) $order->base_price,
+                    'subtotal' => (float) $order->subtotal,
+                    'additional_cost_total' => (float) $order->additional_cost_total,
+                    'grand_total' => (float) $order->grand_total,
+                    'paid_total' => (float) $order->paid_total,
+                    'remaining_total' => (float) $order->remaining_total,
+                    'notes' => $order->notes,
+                    'costs' => $order->costs->map(fn ($cost) => [
+                        'id' => $cost->id,
+                        'cost_name' => $cost->cost_name_snapshot,
+                        'description' => $cost->description,
+                        'qty' => (float) $cost->qty,
+                        'price' => (float) $cost->price,
+                        'total' => (float) $cost->total,
+                    ])->values()->all(),
+                ];
+            })
+            ->all();
+    }
+
     private function transformListItem(Invoice $invoice): array
     {
         $paid = (float) $invoice->payments->sum('amount');
@@ -994,6 +1051,9 @@ class InvoiceController extends Controller
         return [
             'id' => $invoice->id,
             'number' => $invoice->invoice_number,
+            'invoice_type' => $invoice->invoice_type ?? 'sales',
+            'source_type' => $invoice->source_type,
+            'source_id' => $invoice->source_id,
             'customer' => $invoice->customer?->full_name,
             'branch' => $invoice->branch?->name,
             'machine' => $invoice->machine?->machine_number ?: '-',
@@ -1025,6 +1085,9 @@ class InvoiceController extends Controller
         return [
             'id' => $invoice->id,
             'number' => $invoice->invoice_number,
+            'invoice_type' => $invoice->invoice_type ?? 'sales',
+            'source_type' => $invoice->source_type,
+            'source_id' => $invoice->source_id,
             'date' => optional($invoice->transaction_date)->format('Y-m-d'),
             'customer' => $invoice->customer?->full_name,
             'customer_id' => $invoice->customer_id,
@@ -1072,6 +1135,7 @@ class InvoiceController extends Controller
                 'id' => $payment->id,
                 'amount' => (float) $payment->amount,
                 'method' => $payment->payment_method,
+                'payment_type' => $payment->payment_type ?: ($payment->is_dp ? 'cicilan' : 'pelunasan'),
                 'is_dp' => (bool) $payment->is_dp,
                 'date' => optional($payment->payment_date)->format('Y-m-d'),
                 'user_id' => $payment->user_id,
@@ -1089,19 +1153,35 @@ class InvoiceController extends Controller
                 $isPlate = $item->product_type === 'plate';
                 $isComponent = $item->product_type === 'component';
                 $isCostType = $item->product_type === 'cost_type';
-                $descriptor = $isPlate
+                $isLegacyCutting = $item->product_type === 'cutting';
+                $descriptor = $item->description ?: ($isPlate
                     ? trim(($item->plateVariant?->plateType?->name ?? 'Plat') . ' ' . ($item->plateVariant?->size?->value ?? ''))
                     : ($isComponent
                         ? trim(($item->component?->name ?? 'Component') . ' ' . ($item->component?->type_size ?? ''))
                         : ($isCostType
                             ? trim($item->costType?->name ?? 'Biaya')
-                            : trim(($item->cuttingPrice?->machineType?->name ?? 'Cutting') . ' / ' . ($item->cuttingPrice?->plateType?->name ?? '') . ' / ' . ($item->cuttingPrice?->size?->value ?? ''))));
+                            : trim(($item->cuttingPrice?->machineType?->name ?? 'Cutting') . ' / ' . ($item->cuttingPrice?->plateType?->name ?? '') . ' / ' . ($item->cuttingPrice?->size?->value ?? '')))));
+
+                $typeLabel = match (true) {
+                    $isPlate => 'Plat',
+                    $isComponent => 'Component',
+                    $isCostType => 'Biaya',
+                    $isLegacyCutting => 'Cutting',
+                    filled($item->item_type) => ucwords(str_replace(['_', '-'], ' ', (string) $item->item_type)),
+                    default => 'Item',
+                };
 
                 return [
                     'id' => $item->id,
-                    'type' => $isPlate ? 'Plat' : ($isComponent ? 'Component' : ($isCostType ? 'Biaya' : 'Cutting')),
+                    'type' => $typeLabel,
                     'product_type' => $item->product_type,
-                    'desc' => $isPlate || $isComponent || $isCostType ? $descriptor : trim($descriptor . ' / ' . $this->formatPricingMode($item->pricing_mode)),
+                    'item_type' => $item->item_type,
+                    'source_type' => $item->source_type,
+                    'source_id' => $item->source_id,
+                    'unit' => $item->unit,
+                    'desc' => !$item->description && !$isPlate && !$isComponent && !$isCostType && $isLegacyCutting
+                        ? trim($descriptor . ' / ' . $this->formatPricingMode($item->pricing_mode))
+                        : $descriptor,
                     'qty' => $item->qty,
                     'minutes' => $item->minutes,
                     'price' => (float) $item->price,
@@ -1123,6 +1203,114 @@ class InvoiceController extends Controller
                 ];
             })->values()->all(),
         ];
+    }
+
+    private function resolveInvoiceItemSourceType(string $productType): ?string
+    {
+        return match ($productType) {
+            'plate' => 'plate_variant',
+            'cutting' => 'cutting_price',
+            'component' => 'component',
+            'cost_type' => 'cost_type',
+            default => null,
+        };
+    }
+
+    private function resolveInvoiceItemSourceId(string $productType, array $item): ?int
+    {
+        return match ($productType) {
+            'plate' => isset($item['plate_variant_id']) ? (int) $item['plate_variant_id'] : null,
+            'cutting' => isset($item['cutting_price_id']) ? (int) $item['cutting_price_id'] : null,
+            'component' => isset($item['component_id']) ? (int) $item['component_id'] : null,
+            'cost_type' => isset($item['cost_type_id']) ? (int) $item['cost_type_id'] : null,
+            default => null,
+        };
+    }
+
+    private function buildInvoiceItemDescription(string $productType, array $item): ?string
+    {
+        return match ($productType) {
+            'plate' => $this->buildPlateInvoiceItemDescription($item),
+            'cutting' => $this->buildCuttingInvoiceItemDescription($item),
+            'component' => $this->buildComponentInvoiceItemDescription($item),
+            'cost_type' => $this->buildCostTypeInvoiceItemDescription($item),
+            default => null,
+        };
+    }
+
+    private function buildInvoiceItemUnit(string $productType, array $item): ?string
+    {
+        if ($productType === 'cutting' && ($item['pricing_mode'] ?? null) === 'per-minute') {
+            return 'menit';
+        }
+
+        return match ($productType) {
+            'plate' => 'lembar',
+            'cutting', 'component', 'cost_type' => 'pcs',
+            default => null,
+        };
+    }
+
+    private function buildPlateInvoiceItemDescription(array $item): ?string
+    {
+        if (empty($item['plate_variant_id'])) {
+            return null;
+        }
+
+        $plateVariant = PlateVariant::with(['plateType:id,name', 'size:id,value'])->find($item['plate_variant_id']);
+
+        if (!$plateVariant) {
+            return null;
+        }
+
+        return trim(($plateVariant->plateType?->name ?? 'Plat') . ' ' . ($plateVariant->size?->value ?? ''));
+    }
+
+    private function buildCuttingInvoiceItemDescription(array $item): ?string
+    {
+        if (empty($item['cutting_price_id'])) {
+            return null;
+        }
+
+        $cuttingPrice = CuttingPrice::with(['machineType:id,name', 'plateType:id,name', 'size:id,value'])
+            ->find($item['cutting_price_id']);
+
+        if (!$cuttingPrice) {
+            return null;
+        }
+
+        $parts = array_filter([
+            $cuttingPrice->machineType?->name ?: 'Cutting',
+            $cuttingPrice->plateType?->name,
+            $cuttingPrice->size?->value,
+            $this->formatPricingMode($item['pricing_mode'] ?? null),
+        ]);
+
+        return implode(' / ', $parts);
+    }
+
+    private function buildComponentInvoiceItemDescription(array $item): ?string
+    {
+        if (empty($item['component_id'])) {
+            return null;
+        }
+
+        $component = Component::find($item['component_id']);
+
+        if (!$component) {
+            return null;
+        }
+
+        return trim(($component->name ?? 'Component') . ' ' . ($component->type_size ?? ''));
+    }
+
+    private function buildCostTypeInvoiceItemDescription(array $item): ?string
+    {
+        if (empty($item['cost_type_id'])) {
+            return null;
+        }
+
+        return CostType::find($item['cost_type_id'])?->name;
     }
 
     private function resolvePaymentStatus(float $paid, float $grandTotal): string

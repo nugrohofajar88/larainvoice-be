@@ -6,11 +6,15 @@ use App\Http\Controllers\Controller;
 use App\Models\Component;
 use App\Models\CostType;
 use App\Models\Customer;
+use App\Models\Invoice;
+use App\Models\InvoiceItem;
 use App\Models\Machine;
 use App\Models\MachineOrder;
 use App\Models\MachineOrderComponent;
 use App\Models\MachineOrderCost;
+use App\Models\MachineOrderLog;
 use App\Models\MachineOrderPayment;
+use App\Models\BranchInvoiceCounter;
 use App\Models\User;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
@@ -138,6 +142,18 @@ class MachineOrderController extends Controller
                 'updated_by' => $user->id,
             ]);
 
+            MachineOrderLog::create([
+                'machine_order_id' => $order->id,
+                'user_id' => $user->id,
+                'action_type' => 'created',
+                'from_status' => null,
+                'to_status' => $order->status,
+                'note' => 'Order mesin dibuat.',
+                'meta' => [
+                    'order_number' => $order->order_number,
+                ],
+            ]);
+
             $this->syncCosts($order, $validated['costs'] ?? []);
             $this->syncComponents($order, $validated['components'] ?? null, $machine, $qty);
             $this->syncPayments($order, $validated['payments'] ?? [], $user->id);
@@ -174,6 +190,19 @@ class MachineOrderController extends Controller
             $basePrice = isset($validated['base_price']) ? (float) $validated['base_price'] : (float) $machine->base_price;
             $qty = (int) ($validated['qty'] ?? $order->qty ?? 1);
 
+            $previousStatus = (string) $order->status;
+            $nextStatus = (string) ($validated['status'] ?? $order->status);
+
+            if (
+                array_key_exists('status', $validated)
+                && (string) ($validated['status'] ?? '') !== ''
+                && !$this->isAllowedStatusTransition($previousStatus, $nextStatus)
+            ) {
+                throw ValidationException::withMessages([
+                    'status' => ['Status order mesin hanya bisa bergerak maju dan tidak bisa mundur.'],
+                ]);
+            }
+
             $order->update([
                 'branch_id' => $branchId,
                 'order_date' => $validated['order_date'] ?? $order->order_date,
@@ -194,6 +223,24 @@ class MachineOrderController extends Controller
                 'updated_by' => $user->id,
             ]);
 
+            if (
+                array_key_exists('status', $validated)
+                && (string) ($validated['status'] ?? '') !== ''
+                && $previousStatus !== (string) $order->status
+            ) {
+                MachineOrderLog::create([
+                    'machine_order_id' => $order->id,
+                    'user_id' => $user->id,
+                    'action_type' => 'status_changed',
+                    'from_status' => $previousStatus,
+                    'to_status' => (string) $order->status,
+                    'note' => null,
+                    'meta' => [
+                        'order_number' => $order->order_number,
+                    ],
+                ]);
+            }
+
             $this->syncCosts($order, $validated['costs'] ?? []);
             $this->syncComponents($order, $validated['components'] ?? null, $machine, $qty);
 
@@ -212,6 +259,66 @@ class MachineOrderController extends Controller
         ]);
     }
 
+    public function updateStatus(Request $request, $id)
+    {
+        $user = $request->user();
+        $order = $this->findAccessibleOrder($request, $id);
+        $validated = $request->validate([
+            'status' => ['required', 'in:draft,confirmed,in_production,ready,in_shipping,accepted,completed,cancelled'],
+            'note' => ['nullable', 'string'],
+        ]);
+
+        $previousStatus = (string) $order->status;
+        $nextStatus = (string) $validated['status'];
+
+        if ($previousStatus === $nextStatus) {
+            return response()->json([
+                'message' => 'Status order mesin tidak berubah.',
+                'data' => [
+                    'id' => $order->id,
+                    'status' => $order->status,
+                    'status_label' => $this->formatMachineOrderStatus($order->status),
+                ],
+            ]);
+        }
+
+        if (!$this->isAllowedStatusTransition($previousStatus, $nextStatus)) {
+            return response()->json([
+                'message' => 'Status order mesin hanya bisa bergerak maju dan tidak bisa mundur.',
+            ], 422);
+        }
+
+        $order = DB::transaction(function () use ($order, $user, $previousStatus, $nextStatus, $validated) {
+            $order->update([
+                'status' => $nextStatus,
+                'updated_by' => $user->id,
+            ]);
+
+            MachineOrderLog::create([
+                'machine_order_id' => $order->id,
+                'user_id' => $user->id,
+                'action_type' => 'status_changed',
+                'from_status' => $previousStatus,
+                'to_status' => $nextStatus,
+                'note' => filled($validated['note'] ?? null) ? trim((string) $validated['note']) : null,
+                'meta' => [
+                    'order_number' => $order->order_number,
+                ],
+            ]);
+
+            return $order->fresh($this->detailRelations());
+        });
+
+        return response()->json([
+            'message' => 'Status order mesin berhasil diperbarui.',
+            'data' => [
+                'id' => $order->id,
+                'status' => $order->status,
+                'status_label' => $this->formatMachineOrderStatus($order->status),
+            ],
+        ]);
+    }
+
     public function destroy(Request $request, $id)
     {
         $order = $this->findAccessibleOrder($request, $id);
@@ -220,6 +327,79 @@ class MachineOrderController extends Controller
         return response()->json([
             'message' => 'Machine order berhasil dihapus.',
         ]);
+    }
+
+    public function createInvoice(Request $request, $id)
+    {
+        $user = $request->user();
+        $order = $this->findAccessibleOrder($request, $id);
+        $validated = $request->validate([
+            'transaction_date' => ['nullable', 'date'],
+        ]);
+
+        if (!in_array($order->status, ['ready', 'in_shipping', 'accepted', 'completed'], true)) {
+            return response()->json([
+                'message' => 'Invoice hanya bisa dibuat dari machine order yang statusnya ready, in_shipping, accepted, atau completed.',
+            ], 422);
+        }
+
+        if ((float) $order->remaining_total <= 0) {
+            return response()->json([
+                'message' => 'Machine order ini sudah lunas, jadi invoice tagihan baru tidak perlu dibuat.',
+            ], 422);
+        }
+
+        $existingInvoice = Invoice::query()
+            ->where('source_type', 'machine_order')
+            ->where('source_id', $order->id)
+            ->first();
+
+        if ($existingInvoice) {
+            return response()->json([
+                'message' => 'Invoice untuk machine order ini sudah pernah dibuat.',
+                'data' => [
+                    'invoice_id' => $existingInvoice->id,
+                    'invoice_number' => $existingInvoice->invoice_number,
+                ],
+            ], 422);
+        }
+
+        $invoice = DB::transaction(function () use ($order, $user, $validated) {
+            $transactionDate = $validated['transaction_date']
+                ?? optional($order->order_date)->format('Y-m-d')
+                ?? now()->toDateString();
+            $invoice = Invoice::create([
+                'invoice_number' => $this->generateInvoiceNumber((int) $order->branch_id, $transactionDate),
+                'invoice_type' => 'machine_order',
+                'source_type' => 'machine_order',
+                'source_id' => $order->id,
+                'branch_id' => $order->branch_id,
+                'customer_id' => $order->customer_id,
+                'machine_id' => $order->machine_id,
+                'user_id' => $user->id,
+                'transaction_date' => $transactionDate,
+                'status' => 'In-process',
+                'total_amount' => (float) $order->remaining_total,
+                'discount_pct' => 0,
+                'discount_amount' => 0,
+                'grand_total' => (float) $order->remaining_total,
+                'notes' => $this->buildMachineOrderInvoiceNotes($order),
+            ]);
+
+            $this->syncMachineOrderInvoiceItems($invoice, $order);
+
+            return $invoice->fresh(['items', 'payments']);
+        });
+
+        return response()->json([
+            'message' => 'Invoice dari machine order berhasil dibuat.',
+            'data' => [
+                'invoice_id' => $invoice->id,
+                'invoice_number' => $invoice->invoice_number,
+                'grand_total' => (float) $invoice->grand_total,
+                'paid' => 0,
+            ],
+        ], 201);
     }
 
     private function validatePayload(Request $request, $user, bool $isUpdate, ?MachineOrder $order): array
@@ -241,7 +421,7 @@ class MachineOrderController extends Controller
             'actual_finish_date' => ['nullable', 'date'],
             'notes' => ['nullable', 'string'],
             'internal_notes' => ['nullable', 'string'],
-            'status' => ['nullable', 'in:draft,confirmed,in_production,ready,completed,cancelled'],
+            'status' => ['nullable', 'in:draft,confirmed,in_production,ready,in_shipping,accepted,completed,cancelled'],
             'costs' => ['nullable', 'array'],
             'costs.*.cost_type_id' => ['nullable', 'exists:cost_types,id'],
             'costs.*.cost_name' => ['nullable', 'string', 'max:255'],
@@ -453,6 +633,7 @@ class MachineOrderController extends Controller
             'payments.receiver',
             'components.component.componentCategory',
             'creator',
+            'logs.user',
             'updater',
         ];
     }
@@ -477,6 +658,12 @@ class MachineOrderController extends Controller
 
     private function transformDetail(MachineOrder $order): array
     {
+        $invoice = Invoice::query()
+            ->select(['id', 'invoice_number', 'source_id'])
+            ->where('source_type', 'machine_order')
+            ->where('source_id', $order->id)
+            ->first();
+
         return [
             'id' => $order->id,
             'branch_id' => $order->branch_id,
@@ -508,8 +695,32 @@ class MachineOrderController extends Controller
             'notes' => $order->notes,
             'internal_notes' => $order->internal_notes,
             'status' => $order->status,
+            'invoice' => $invoice ? [
+                'id' => $invoice->id,
+                'invoice_number' => $invoice->invoice_number,
+            ] : null,
             'created_by' => $order->creator?->name,
             'updated_by' => $order->updater?->name,
+            'logs' => $order->logs->map(function (MachineOrderLog $log) {
+                return [
+                    'id' => $log->id,
+                    'action_type' => $log->action_type,
+                    'action_label' => match ($log->action_type) {
+                        'created' => 'Order Dibuat',
+                        'status_changed' => 'Perubahan Status',
+                        default => ucwords(str_replace('_', ' ', (string) $log->action_type)),
+                    },
+                    'from_status' => $log->from_status,
+                    'from_status_label' => $this->formatMachineOrderStatus($log->from_status),
+                    'to_status' => $log->to_status,
+                    'to_status_label' => $this->formatMachineOrderStatus($log->to_status),
+                    'note' => $log->note,
+                    'handled_by' => $log->user?->name,
+                    'user_id' => $log->user_id,
+                    'meta' => $log->meta ?? [],
+                    'created_at' => optional($log->created_at)->format('Y-m-d H:i:s'),
+                ];
+            })->values()->all(),
             'costs' => $order->costs->map(fn (MachineOrderCost $cost) => [
                 'id' => $cost->id,
                 'cost_type_id' => $cost->cost_type_id,
@@ -541,5 +752,134 @@ class MachineOrderController extends Controller
                 'is_optional' => (bool) $component->is_optional,
             ])->values()->all(),
         ];
+    }
+
+    private function generateInvoiceNumber(int $branchId, string $transactionDate): string
+    {
+        $date = Carbon::parse($transactionDate);
+        $month = (int) $date->format('m');
+        $year = (int) $date->format('Y');
+
+        $counter = BranchInvoiceCounter::query()
+            ->lockForUpdate()
+            ->firstOrCreate(
+                ['branch_id' => $branchId, 'month' => $month, 'year' => $year],
+                ['prefix' => 'INV', 'last_number' => 0]
+            );
+
+        $counter->last_number += 1;
+        $counter->save();
+
+        return implode('/', [
+            $counter->prefix ?: 'INV',
+            str_pad((string) $branchId, 2, '0', STR_PAD_LEFT),
+            str_pad((string) $counter->last_number, 3, '0', STR_PAD_LEFT),
+            str_pad((string) $month, 2, '0', STR_PAD_LEFT),
+            (string) $year,
+        ]);
+    }
+
+    private function syncMachineOrderInvoiceItems(Invoice $invoice, MachineOrder $order): void
+    {
+        InvoiceItem::create([
+            'invoice_id' => $invoice->id,
+            'product_type' => 'machine_order',
+            'item_type' => 'machine_order_balance',
+            'source_type' => 'machine_order',
+            'source_id' => $order->id,
+            'description' => $this->buildMachineOrderInvoiceDescription($order),
+            'unit' => 'tagihan',
+            'qty' => 1,
+            'minutes' => 0,
+            'price' => (float) $order->remaining_total,
+            'discount_pct' => 0,
+            'discount_amount' => 0,
+            'subtotal' => (float) $order->remaining_total,
+        ]);
+    }
+
+    private function buildMachineOrderInvoiceNotes(MachineOrder $order): ?string
+    {
+        $parts = array_filter([
+            'Tagihan sisa pembayaran dibuat dari machine order ' . $order->order_number,
+            'Total order: ' . number_format((float) $order->grand_total, 2, '.', ''),
+            'Sudah dibayar saat order: ' . number_format((float) $order->paid_total, 2, '.', ''),
+            'Sisa yang ditagihkan: ' . number_format((float) $order->remaining_total, 2, '.', ''),
+            $order->notes,
+        ]);
+
+        return $parts ? implode("\n\n", $parts) : null;
+    }
+
+    private function buildMachineOrderInvoiceDescription(MachineOrder $order): string
+    {
+        $parts = array_filter([
+            'Sisa tagihan order mesin ' . ($order->order_number ?: '-'),
+            $order->machine_name_snapshot ?: 'Mesin',
+            'Total order ' . number_format((float) $order->grand_total, 2, '.', ''),
+            'Terbayar ' . number_format((float) $order->paid_total, 2, '.', ''),
+        ]);
+
+        return implode(' - ', $parts);
+    }
+
+    private function formatMachineOrderStatus(?string $status): ?string
+    {
+        if (!$status) {
+            return null;
+        }
+
+        return match ((string) $status) {
+            'draft' => 'Draft',
+            'confirmed' => 'Confirmed',
+            'in_production' => 'In Production',
+            'ready' => 'Ready',
+            'in_shipping' => 'In Shipping',
+            'accepted' => 'Accepted',
+            'completed' => 'Completed',
+            'cancelled' => 'Cancelled',
+            default => ucwords(str_replace('_', ' ', (string) $status)),
+        };
+    }
+
+    private function isAllowedStatusTransition(?string $currentStatus, ?string $targetStatus): bool
+    {
+        $currentStatus = (string) $currentStatus;
+        $targetStatus = (string) $targetStatus;
+
+        if ($currentStatus === '' || $targetStatus === '') {
+            return false;
+        }
+
+        if ($currentStatus === $targetStatus) {
+            return true;
+        }
+
+        if (in_array($currentStatus, ['completed', 'cancelled'], true)) {
+            return false;
+        }
+
+        if ($targetStatus === 'cancelled') {
+            return !in_array($currentStatus, ['completed', 'cancelled'], true);
+        }
+
+        $flow = [
+            'draft',
+            'confirmed',
+            'in_production',
+            'ready',
+            'in_shipping',
+            'accepted',
+            'completed',
+        ];
+
+        $currentIndex = array_search($currentStatus, $flow, true);
+        $targetIndex = array_search($targetStatus, $flow, true);
+
+        if ($currentIndex === false || $targetIndex === false) {
+            return false;
+        }
+
+        return $targetIndex > $currentIndex;
     }
 }

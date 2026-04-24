@@ -94,4 +94,15 @@ class MachineOrder extends Model
     {
         return $this->belongsTo(User::class, 'updated_by');
     }
+
+    public function invoices()
+    {
+        return $this->hasMany(Invoice::class, 'source_id')
+            ->where('source_type', 'machine_order');
+    }
+
+    public function logs()
+    {
+        return $this->hasMany(MachineOrderLog::class)->oldest('id');
+    }
 }

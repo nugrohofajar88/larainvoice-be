@@ -15,6 +15,11 @@ class InvoiceItem extends Model
     protected $fillable = [
         'invoice_id',
         'product_type',
+        'item_type',
+        'source_type',
+        'source_id',
+        'description',
+        'unit',
         'plate_variant_id',
         'cutting_price_id',
         'component_id',
@@ -29,6 +34,7 @@ class InvoiceItem extends Model
     ];
 
     protected $casts = [
+        'source_id' => 'integer',
         'price' => 'decimal:2',
         'discount_pct' => 'decimal:2',
         'discount_amount' => 'decimal:2',
