@@ -80,6 +80,18 @@ class MachineOrder extends Model
         return $this->hasMany(MachineOrderPayment::class);
     }
 
+    public function assignments()
+    {
+        return $this->hasMany(MachineOrderAssignment::class);
+    }
+
+    public function assignedUsers()
+    {
+        return $this->belongsToMany(User::class, 'machine_order_assignments')
+            ->withPivot(['role', 'notes'])
+            ->withTimestamps();
+    }
+
     public function components()
     {
         return $this->hasMany(MachineOrderComponent::class);

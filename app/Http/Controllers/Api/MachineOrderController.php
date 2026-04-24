@@ -10,6 +10,7 @@ use App\Models\Invoice;
 use App\Models\InvoiceItem;
 use App\Models\Machine;
 use App\Models\MachineOrder;
+use App\Models\MachineOrderAssignment;
 use App\Models\MachineOrderComponent;
 use App\Models\MachineOrderCost;
 use App\Models\MachineOrderLog;
@@ -23,6 +24,8 @@ use Illuminate\Validation\ValidationException;
 
 class MachineOrderController extends Controller
 {
+    private const ASSIGNMENT_ROLES = ['lead', 'teknisi', 'assembler', 'helper'];
+
     public function index(Request $request)
     {
         $user = $request->user();
@@ -157,6 +160,7 @@ class MachineOrderController extends Controller
             $this->syncCosts($order, $validated['costs'] ?? []);
             $this->syncComponents($order, $validated['components'] ?? null, $machine, $qty);
             $this->syncPayments($order, $validated['payments'] ?? [], $user->id);
+            $this->syncAssignments($order, $validated['assignments'] ?? []);
             $this->refreshTotals($order);
 
             return $order->fresh($this->detailRelations());
@@ -246,6 +250,10 @@ class MachineOrderController extends Controller
 
             if (array_key_exists('payments', $validated)) {
                 $this->syncPayments($order, $validated['payments'] ?? [], $user->id);
+            }
+
+            if (array_key_exists('assignments', $validated)) {
+                $this->syncAssignments($order, $validated['assignments'] ?? []);
             }
 
             $this->refreshTotals($order);
@@ -442,6 +450,10 @@ class MachineOrderController extends Controller
             'payments.*.reference_number' => ['nullable', 'string', 'max:255'],
             'payments.*.notes' => ['nullable', 'string'],
             'payments.*.received_by' => ['nullable', 'exists:users,id'],
+            'assignments' => ['sometimes', 'array'],
+            'assignments.*.user_id' => ['required_with:assignments', 'exists:users,id'],
+            'assignments.*.role' => ['nullable', 'in:' . implode(',', self::ASSIGNMENT_ROLES)],
+            'assignments.*.notes' => ['nullable', 'string'],
         ]);
     }
 
@@ -467,6 +479,24 @@ class MachineOrderController extends Controller
                 throw ValidationException::withMessages([
                     'sales_id' => ['Sales tidak berada di cabang yang dipilih.'],
                 ]);
+            }
+        }
+
+        $assignments = $validated['assignments'] ?? [];
+        $userIds = collect($assignments)->pluck('user_id')->filter()->unique()->values();
+
+        if ($userIds->isNotEmpty()) {
+            $users = User::whereIn('id', $userIds)->get()->keyBy('id');
+            foreach ($userIds as $uid) {
+                $u = $users->get($uid);
+                if (!$u) {
+                    continue;
+                }
+                if ((int) ($u->branch_id ?? 0) !== $branchId && !$u->isSuperAdmin()) {
+                    throw ValidationException::withMessages([
+                        'assignments' => ['User yang ditugaskan harus berada di cabang yang sama dengan order.'],
+                    ]);
+                }
             }
         }
     }
@@ -551,6 +581,27 @@ class MachineOrderController extends Controller
         }
     }
 
+    private function syncAssignments(MachineOrder $order, array $assignments): void
+    {
+        $order->assignments()->delete();
+
+        $seen = [];
+        foreach ($assignments as $assignment) {
+            $userId = (int) ($assignment['user_id'] ?? 0);
+            if (!$userId || isset($seen[$userId])) {
+                continue;
+            }
+            $seen[$userId] = true;
+
+            MachineOrderAssignment::create([
+                'machine_order_id' => $order->id,
+                'user_id' => $userId,
+                'role' => $assignment['role'] ?? null,
+                'notes' => $assignment['notes'] ?? null,
+            ]);
+        }
+    }
+
     private function refreshTotals(MachineOrder $order): void
     {
         $baseTotal = (float) $order->base_price * (int) $order->qty;
@@ -631,6 +682,7 @@ class MachineOrderController extends Controller
             'machine.type',
             'costs.costType',
             'payments.receiver',
+            'assignments.user',
             'components.component.componentCategory',
             'creator',
             'logs.user',
@@ -650,6 +702,7 @@ class MachineOrderController extends Controller
             'machine' => $order->machine_name_snapshot,
             'qty' => (int) $order->qty,
             'status' => $order->status,
+            'assigned_count' => $order->assignedUsers->count(),
             'grand_total' => (float) $order->grand_total,
             'paid_total' => (float) $order->paid_total,
             'remaining_total' => (float) $order->remaining_total,
@@ -740,6 +793,13 @@ class MachineOrderController extends Controller
                 'reference_number' => $payment->reference_number,
                 'notes' => $payment->notes,
                 'received_by' => $payment->receiver?->name,
+            ])->values()->all(),
+            'assignments' => $order->assignments->map(fn (MachineOrderAssignment $assignment) => [
+                'id' => $assignment->id,
+                'user_id' => $assignment->user_id,
+                'user' => $assignment->user?->name,
+                'role' => $assignment->role,
+                'notes' => $assignment->notes,
             ])->values()->all(),
             'components' => $order->components->map(fn (MachineOrderComponent $component) => [
                 'id' => $component->id,
