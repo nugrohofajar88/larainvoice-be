@@ -146,6 +146,13 @@ class MenuSeeder extends Seeder
                 'sort_order' => 4,
             ],
             [
+                'id' => 36,
+                'name' => 'Order Jasa',
+                'key' => 'service-order',
+                'parent_id' => 11,
+                'sort_order' => 5,
+            ],
+            [
                 'id' => 14,
                 'name' => 'Pengaturan',
                 'key' => 'setting',
