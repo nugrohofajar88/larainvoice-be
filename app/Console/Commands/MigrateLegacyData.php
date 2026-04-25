@@ -520,6 +520,9 @@ class MigrateLegacyData extends Command
                 [
                     'id' => $id_invoice,
                     'invoice_number' => $old->invoice_number,
+                    'invoice_type' => 'sales',
+                    'source_type' => null,
+                    'source_id' => null,
                     'branch_id' => $old->id_office,
                     'customer_id' => $old->id_customer,
                     'machine_id' => null, // karena di DB lama tidak ada field mesin, bisa dikosongkan atau set ke default
@@ -548,6 +551,11 @@ class MigrateLegacyData extends Command
 
                     'aci.id_plat as plate_variant_id',
                     'aci.id_service as cutting_price_id',
+                    'sp.id_cutting_type',
+                    'sp.id_plat as cutting_plate_type_id',
+                    'sp.size as cutting_size',
+                    'pp.id_plat as plate_type_id',
+                    'pp.size as plate_size',
 
                     // Menentukan pricing_mode berdasarkan kecocokan harga di tabel service_prices
                     DB::raw("
@@ -572,9 +580,22 @@ class MigrateLegacyData extends Command
                 ->get();
 
             foreach ($invoiceItems as $item) {
+                $itemType = $item->product_type;
+                $sourceType = $this->resolveLegacyInvoiceItemSourceType($item->product_type);
+                $sourceId = $item->product_type === 'plate'
+                    ? $item->plate_variant_id
+                    : ($item->product_type === 'cutting' ? $item->cutting_price_id : null);
+                $description = $this->buildLegacyInvoiceItemDescription($item);
+                $unit = $this->resolveLegacyInvoiceItemUnit($item->product_type, $item->pricing_mode);
+
                 DB::table('invoice_items')->insert([
                     'invoice_id' => $id_invoice,
                     'product_type' => $item->product_type,
+                    'item_type' => $itemType,
+                    'source_type' => $sourceType,
+                    'source_id' => $sourceId,
+                    'description' => $description,
+                    'unit' => $unit,
                     'plate_variant_id' => $item->plate_variant_id,
                     'cutting_price_id' => $item->cutting_price_id,
                     'pricing_mode' => $item->pricing_mode,
@@ -602,6 +623,65 @@ class MigrateLegacyData extends Command
             DB::statement("ALTER TABLE invoice_items AUTO_INCREMENT = " . ($maxId + 1));
         }
 
+    }
+
+    private function resolveLegacyInvoiceItemSourceType(?string $productType): ?string
+    {
+        return match ($productType) {
+            'plate' => 'plate_variant',
+            'cutting' => 'cutting_price',
+            default => null,
+        };
+    }
+
+    private function resolveLegacyInvoiceItemUnit(?string $productType, ?string $pricingMode): ?string
+    {
+        if ($productType === 'cutting' && $pricingMode === 'per-minute') {
+            return 'menit';
+        }
+
+        return match ($productType) {
+            'plate' => 'lembar',
+            'cutting' => 'pcs',
+            default => null,
+        };
+    }
+
+    private function buildLegacyInvoiceItemDescription(object $item): ?string
+    {
+        if ($item->product_type === 'plate') {
+            $plateTypeName = DB::table('plate_types')->where('id', $item->plate_type_id)->value('name') ?? 'Plat';
+            $sizeValue = $item->plate_size ?? '';
+
+            return trim($plateTypeName . ' ' . $sizeValue);
+        }
+
+        if ($item->product_type === 'cutting') {
+            $machineTypeName = DB::table('machine_types')->where('id', $item->id_cutting_type)->value('name') ?? 'Cutting';
+            $plateTypeName = DB::table('plate_types')->where('id', $item->cutting_plate_type_id)->value('name') ?? '';
+            $sizeValue = $item->cutting_size ?? '';
+            $pricingMode = $this->formatLegacyPricingMode($item->pricing_mode);
+
+            return trim(implode(' / ', array_filter([
+                $machineTypeName,
+                $plateTypeName,
+                $sizeValue,
+                $pricingMode,
+            ])));
+        }
+
+        return null;
+    }
+
+    private function formatLegacyPricingMode(?string $pricingMode): string
+    {
+        return match ($pricingMode) {
+            'easy' => 'Easy',
+            'medium' => 'Medium',
+            'difficult' => 'Difficult',
+            'per-minute' => 'Per Menit',
+            default => '',
+        };
     }
 
     private function migratePayments()

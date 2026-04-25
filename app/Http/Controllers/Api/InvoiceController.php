@@ -1193,6 +1193,7 @@ class InvoiceController extends Controller
                     'mime_type' => $file->mime_type,
                 ])->values()->all(),
             ])->values()->all(),
+            'source_detail' => $this->resolveInvoiceSourceDetail($invoice),
             'items' => $invoice->items->map(function (InvoiceItem $item) {
                 $isPlate = $item->product_type === 'plate';
                 $isComponent = $item->product_type === 'component';
@@ -1247,6 +1248,113 @@ class InvoiceController extends Controller
                 ];
             })->values()->all(),
         ];
+    }
+
+    private function resolveInvoiceSourceDetail(Invoice $invoice): ?array
+    {
+        if ($invoice->source_type === 'machine_order' && $invoice->source_id) {
+            $order = MachineOrder::query()
+                ->with([
+                    'customer:id,full_name',
+                    'machine:id,machine_number',
+                    'sales:id,name',
+                    'assignments.user:id,name',
+                    'components.component:id,name,type_size',
+                    'costs:id,machine_order_id,cost_name_snapshot,description,qty,price,total',
+                ])
+                ->find($invoice->source_id);
+
+            if (!$order) {
+                return null;
+            }
+
+            return [
+                'type' => 'machine_order',
+                'order_number' => $order->order_number,
+                'order_date' => optional($order->order_date)->format('Y-m-d'),
+                'status' => $order->status,
+                'status_label' => $this->formatStatusLabel($this->normalizeStatusKey((string) $order->status)),
+                'customer_name' => $order->customer?->full_name,
+                'machine_name' => $order->machine?->machine_number ?: $order->machine_name_snapshot,
+                'sales_name' => $order->sales?->name,
+                'qty' => (int) ($order->qty ?? 0),
+                'estimated_start_date' => optional($order->estimated_start_date)->format('Y-m-d'),
+                'estimated_finish_date' => optional($order->estimated_finish_date)->format('Y-m-d'),
+                'actual_finish_date' => optional($order->actual_finish_date)->format('Y-m-d'),
+                'notes' => $order->notes,
+                'internal_notes' => $order->internal_notes,
+                'subtotal' => (float) $order->subtotal,
+                'additional_cost_total' => (float) $order->additional_cost_total,
+                'grand_total' => (float) $order->grand_total,
+                'assignments' => $order->assignments->map(fn ($assignment) => [
+                    'user_name' => $assignment->user?->name,
+                    'role' => $assignment->role,
+                    'notes' => $assignment->notes,
+                ])->values()->all(),
+                'components' => $order->components->map(fn ($component) => [
+                    'name' => $component->component?->name ?: $component->component_name_snapshot,
+                    'type_size' => $component->component?->type_size,
+                    'qty' => (int) ($component->qty ?? 0),
+                    'notes' => $component->notes,
+                ])->values()->all(),
+                'costs' => $order->costs->map(fn ($cost) => [
+                    'name' => $cost->cost_name_snapshot,
+                    'description' => $cost->description,
+                    'qty' => (float) ($cost->qty ?? 0),
+                    'price' => (float) ($cost->price ?? 0),
+                    'total' => (float) ($cost->total ?? 0),
+                ])->values()->all(),
+            ];
+        }
+
+        if ($invoice->source_type === 'service_order' && $invoice->source_id) {
+            $order = ServiceOrder::query()
+                ->with([
+                    'customer:id,full_name',
+                    'assignments.user:id,name',
+                    'components.component:id,name,type_size',
+                ])
+                ->find($invoice->source_id);
+
+            if (!$order) {
+                return null;
+            }
+
+            return [
+                'type' => 'service_order',
+                'order_number' => $order->order_number,
+                'order_type' => $order->order_type,
+                'order_type_label' => $order->order_type === 'training' ? 'Pelatihan' : 'Servis',
+                'order_date' => optional($order->order_date)->format('Y-m-d'),
+                'status' => $order->status,
+                'status_label' => $this->formatStatusLabel($this->normalizeStatusKey((string) $order->status)),
+                'customer_name' => $order->customer?->full_name,
+                'title' => $order->title,
+                'category' => $order->category,
+                'description' => $order->description,
+                'location' => $order->location,
+                'planned_start_date' => optional($order->planned_start_date)->format('Y-m-d'),
+                'duration_days' => (int) ($order->duration_days ?? 0),
+                'actual_start_date' => optional($order->actual_start_date)->format('Y-m-d'),
+                'actual_finish_date' => optional($order->actual_finish_date)->format('Y-m-d'),
+                'completion_notes' => $order->completion_notes,
+                'notes' => $order->notes,
+                'assignments' => $order->assignments->map(fn ($assignment) => [
+                    'user_name' => $assignment->user?->name,
+                    'role' => $assignment->role,
+                    'notes' => $assignment->notes,
+                ])->values()->all(),
+                'components' => $order->components->map(fn ($component) => [
+                    'name' => $component->component?->name ?: $component->component_name_snapshot,
+                    'type_size' => $component->component?->type_size,
+                    'qty' => (int) ($component->qty ?? 0),
+                    'notes' => $component->notes,
+                    'billable' => (bool) $component->billable,
+                ])->values()->all(),
+            ];
+        }
+
+        return null;
     }
 
     private function resolveInvoiceItemSourceType(string $productType): ?string
@@ -1461,6 +1569,5 @@ class InvoiceController extends Controller
         };
     }
 }
-
 
 

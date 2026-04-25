@@ -451,6 +451,7 @@ class ServiceOrderController extends Controller
         $order = $this->findAccessibleOrder($request, $id);
         $validated = $request->validate([
             'transaction_date' => ['nullable', 'date'],
+            'discount_pct' => ['nullable', 'numeric', 'min:0', 'max:100'],
             'grand_total' => ['required', 'numeric', 'min:0'],
             'notes' => ['nullable', 'string'],
             'items' => ['required', 'array', 'min:1'],
@@ -484,7 +485,12 @@ class ServiceOrderController extends Controller
                 ?? now()->toDateString();
 
             $itemsTotal = collect($validated['items'])->sum(fn ($item) => (float) $item['qty'] * (float) $item['price']);
-            $grandTotal = (float) $validated['grand_total'];
+            $requestedGrandTotal = (float) $validated['grand_total'];
+            $grandTotal = max(min($requestedGrandTotal, $itemsTotal), 0);
+            $discountAmount = round(max($itemsTotal - $grandTotal, 0), 2);
+            $discountPct = $itemsTotal > 0
+                ? round(($discountAmount / $itemsTotal) * 100, 2)
+                : 0;
 
             $invoice = Invoice::create([
                 'invoice_number' => $this->generateInvoiceNumber((int) $order->branch_id, $transactionDate),
@@ -496,10 +502,10 @@ class ServiceOrderController extends Controller
                 'machine_id' => null,
                 'user_id' => $user->id,
                 'transaction_date' => $transactionDate,
-                'status' => 'In-process',
+                'status' => 'Completed',
                 'total_amount' => $itemsTotal,
-                'discount_pct' => 0,
-                'discount_amount' => max($itemsTotal - $grandTotal, 0),
+                'discount_pct' => $discountPct,
+                'discount_amount' => $discountAmount,
                 'grand_total' => $grandTotal,
                 'notes' => $validated['notes'] ?? $this->buildInvoiceNotes($order),
             ]);
