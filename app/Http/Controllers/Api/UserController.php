@@ -9,6 +9,17 @@ use Illuminate\Support\Facades\Hash;
 
 class UserController extends Controller
 {
+    private function applyAdministratorVisibilityScope($query, ?User $currentUser)
+    {
+        if ($currentUser && $currentUser->isSuperAdmin()) {
+            return $query;
+        }
+
+        return $query->whereHas('role', function ($q) {
+            $q->whereNotIn('name', ['administrator', 'admin pusat']);
+        });
+    }
+
     public function index(Request $request)
     {
         $currentUser = $request->user();
@@ -18,6 +29,8 @@ class UserController extends Controller
         $query->whereHas('role', function ($q) {
             $q->where('name', '!=', 'sales');
         });
+
+        $query = $this->applyAdministratorVisibilityScope($query, $currentUser);
 
         // If not superadmin, restrict to current user's branch
         if ($currentUser && !$currentUser->isSuperAdmin()) {
@@ -93,8 +106,9 @@ class UserController extends Controller
     public function show(Request $request, $id)
     {
         $currentUser = $request->user();
+        $query = User::with(['role','branch']);
 
-        $query = User::with(['role','branch'])->findOrFail($id);
+        $query = $this->applyAdministratorVisibilityScope($query, $currentUser);
 
         if ($currentUser && !$currentUser->isSuperAdmin()) {
             $query->where('branch_id', $currentUser->branch_id);
